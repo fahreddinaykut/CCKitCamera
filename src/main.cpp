@@ -38,8 +38,7 @@
 #define cmdTemp 0x01
 #define cmdHum 0x02
 #define cmdCamStatus 0x03
-#define cmdSsid 0x4
-#define cmdPass 0x5
+#define cmdResponseSetting 0x04
 
 #define EEPROM_SIZE 64
 #define SCREEN_WIDTH 128    // OLED display width, in pixels
@@ -52,12 +51,13 @@
 // See the following for generating UUIDs:
 // https://www.uuidgenerator.net/
 
-typedef struct broadcast_message {
-    char type[16]="unknown"; //data or broadcast
-    char ssid[16]="slave"; //slave or master
-    char pass[16]="unknown";// slider pan tilt
-    uint8_t datalen=1;
-    char data[128]=" ";
+typedef struct broadcast_message
+{
+  char type[16] = "unknown"; // data or broadcast
+  char ssid[16] = "slave";   // slave or master
+  char pass[16] = "unknown"; // slider pan tilt
+  uint8_t datalen = 1;
+  char data[128] = " ";
 } broadcast_message;
 union twoByte
 {
@@ -72,7 +72,7 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 void startDataServer();
 void initCam();
 void drawCentreString(const char *buf, int x, int y);
-void sendData(std::string incomingdata, uint8_t len );
+void sendData(std::string incomingdata, uint8_t len);
 void initBroadcastSlave();
 void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status);
 void OnDataRecv(const uint8_t *mac_addr, const uint8_t *data, int data_len);
@@ -115,13 +115,13 @@ void measure()
     hum = sht30.RH;
     twoByte temptwo;
     twoByte humtwo;
-    temptwo.iVal=temp*10.0;
-    humtwo.iVal=hum*10.0;
-    Serial.printf("temp %d hum %d\n",temptwo.iVal,humtwo.iVal);
-    uint8_t tempData[] = {cmdTemp, temptwo.bVal[0],temptwo.bVal[1]};
+    temptwo.iVal = temp * 10.0;
+    humtwo.iVal = hum * 10.0;
+    Serial.printf("temp %d hum %d\n", temptwo.iVal, humtwo.iVal);
+    uint8_t tempData[] = {cmdTemp, temptwo.bVal[0], temptwo.bVal[1]};
     std::string tempDataval = std::string((char *)tempData, 3);
     sendData(tempDataval, 3);
-    uint8_t humData[] = {cmdHum, humtwo.bVal[0],humtwo.bVal[1]};
+    uint8_t humData[] = {cmdHum, humtwo.bVal[0], humtwo.bVal[1]};
     std::string humDataval = std::string((char *)humData, 3);
     sendData(humDataval, 3);
     // Serial.println((String)sht30.tempC + " °C");
@@ -289,7 +289,7 @@ void loop()
   //     myData.data[i] = val[i];
   // }
   broadcast();
-  sendData("pulse",1);
+  sendData("pulse", 1);
   sendDebugMessages(100);
   vTaskDelay(100 / portTICK_PERIOD_MS);
 }
@@ -333,16 +333,16 @@ void displayTask(void *parameter)
     if (WiFi.isConnected())
     {
       display.drawBitmap(4, 0, wifi1_icon16x16, 16, 16, 1);
-          uint8_t wifiData[] = {cmdCamStatus, 0x1};
-    std::string wifiDataval = std::string((char *)wifiData, 2);
-    sendData(wifiDataval, 2);
+      uint8_t wifiData[] = {cmdCamStatus, 0x1};
+      std::string wifiDataval = std::string((char *)wifiData, 2);
+      sendData(wifiDataval, 2);
     }
     else
     {
       display.drawBitmap(4, 0, cancel_icon16x16, 16, 16, 1);
-                uint8_t wifiData[] = {cmdCamStatus, 0x0};
-    std::string wifiDataval = std::string((char *)wifiData, 2);
-    sendData(wifiDataval, 2);
+      uint8_t wifiData[] = {cmdCamStatus, 0x0};
+      std::string wifiDataval = std::string((char *)wifiData, 2);
+      sendData(wifiDataval, 2);
     }
     display.display();
     vTaskDelay(200 / portTICK_PERIOD_MS);
@@ -434,11 +434,16 @@ void OnDataRecv(const uint8_t *mac_addr, const uint8_t *data, int data_len)
     }
     processData(s);
   }
-  else if((String)myData.type == "wificonfig")
+  else if ((String)myData.type == "wificonfig")
   {
-    ssidAP=myData.ssid;
-    passwordAP=myData.pass;
-    saveToEEPROM(ssidAP,passwordAP);
+    ssidAP = myData.ssid;
+    passwordAP = myData.pass;
+    saveToEEPROM(ssidAP, passwordAP);
+    uint8_t data[] = {cmdResponseSetting, 0x1};
+    std::string sendDataVal = std::string((char *)data, 2);
+    sendData(sendDataVal, sendDataVal.length());
+    vTaskDelay(3000/portTICK_PERIOD_MS);
+    ESP.restart();
   }
 }
 
@@ -508,8 +513,8 @@ void initCam()
     {
       Serial.println("ESPNow Init Success");
       nowInit = 1;
-        esp_now_register_send_cb(OnDataSent);
-  esp_now_register_recv_cb(OnDataRecv);
+      esp_now_register_send_cb(OnDataSent);
+      esp_now_register_recv_cb(OnDataRecv);
       initBroadcastSlave();
     }
     else
@@ -579,7 +584,7 @@ void broadcast()
 {
   esp_now_peer_info_t slave;
   slave.channel = CHANNEL; // pick a channel
-  slave.encrypt = 0; // no encryption
+  slave.encrypt = 0;       // no encryption
   for (int ii = 0; ii < 6; ++ii)
   {
     slave.peer_addr[ii] = (uint8_t)0xff;
@@ -590,10 +595,11 @@ void broadcast()
 }
 void sendDebugMessages(int tick)
 {
-          unsigned long        currentMillis  = millis();
-        static unsigned long previousMillis = 0;
-        if (currentMillis - previousMillis >= tick) {
-          Serial.printf("Temp:%.2f\t Humudity:%.2f\t \n",temp,hum);
-            previousMillis = currentMillis;
-        }
+  unsigned long currentMillis = millis();
+  static unsigned long previousMillis = 0;
+  if (currentMillis - previousMillis >= tick)
+  {
+    Serial.printf("Temp:%.2f\t Humudity:%.2f\t \n", temp, hum);
+    previousMillis = currentMillis;
+  }
 }
