@@ -1,18 +1,3 @@
-/*********
-  Rui Santos
-  Complete project details at https://RandomNerdTutorials.com/esp32-cam-video-streaming-web-server-camera-home-assistant/
-
-  IMPORTANT!!!
-   - Select Board "AI Thinker ESP32-CAM"
-   - GPIO 0 must be connected to GND to upload a sketch
-   - After connecting GPIO 0 to GND, press the ESP32-CAM on-board RESET button to put your board in flashing mode
-
-  Permission is hereby granted, free of charge, to any person obtaining a copy
-  of this software and associated documentation files.
-
-  The above copyright notice and this permission notice shall be included in all
-  copies or substantial portions of the Software.
-*********/
 
 #include "esp_camera.h"
 #include <WiFi.h>
@@ -35,22 +20,30 @@
 #include "EEPROM.h"
 #include "image.h"
 
+#include <AsyncTCP.h>
+#include <ESPAsyncWebServer.h>
+#include "AsyncElegantOTA.h"
+
 #define cmdTemp 0x01
 #define cmdHum 0x02
 #define cmdCamStatus 0x03
 #define cmdResponseSetting 0x04
+#define cmdFlashToggle 0x5
+#define cmdCamTempError 0x6
+#define cmdCamUpdateMode 0x7
 
 #define EEPROM_SIZE 64
 #define SCREEN_WIDTH 128    // OLED display width, in pixels
 #define SCREEN_HEIGHT 64    // OLED display height, in pixels
 #define OLED_RESET -1       // Reset pin # (or -1 if sharing Arduino reset pin)
 #define SCREEN_ADDRESS 0x3C ///< See datasheet for Address; 0x3D for 128x64, 0x3C for 128x32
-#define CHANNEL 3
+#define CHANNEL 1
 #define PRINTSCANRESULTS 0
 #define DELETEBEFOREPAIR 0
+#define LED_BUILTIN 4
 // See the following for generating UUIDs:
 // https://www.uuidgenerator.net/
-
+    AsyncWebServer server(80);
 typedef struct broadcast_message
 {
   char type[16] = "unknown"; // data or broadcast
@@ -66,7 +59,7 @@ union twoByte
 };
 uFire::SHT3x sht30;
 int addr = 0;
-
+uint8_t updatemode = 0;
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
 void startDataServer();
@@ -81,6 +74,10 @@ void loadFromEEPROM();
 void broadcast();
 void sendDebugMessages(int tick);
 void processData(std::string value);
+void writeLedStatus(uint8_t mode);
+void writeUpdateMode(uint8_t mode);
+uint8_t loadUpdateMode();
+uint8_t loadLedStatus();
 const char *ssidAP = "CCKIT";
 const char *passwordAP = "123456789";
 
@@ -100,17 +97,20 @@ byte peerConnected;
 
 void measure()
 {
+  uint8_t errorData1[] = {cmdCamTempError, 0x1};
+  uint8_t errorData2[] = {cmdCamTempError, 0x2};
+  std::string errorData1S = std::string((char *)errorData1, 2);
+  std::string errorData2S = std::string((char *)errorData2, 2);
   sht30.measure();
   switch (sht30.status)
   {
   case sht30.STATUS_NOT_CONNECTED:
-    //  Serial.println("Error: Sensor not connected");
+    sendData(errorData1S, errorData1S.length()); //Send error if cannot read sensor
     break;
   case sht30.STATUS_CRC_ERROR:
-    Serial.println("Error: CRC error");
+    sendData(errorData2S, errorData1S.length());//Send error if cannot read sensor
     break;
   case sht30.STATUS_NO_ERROR:
-
     temp = sht30.tempC;
     hum = sht30.RH;
     twoByte temptwo;
@@ -260,13 +260,25 @@ void startCameraServer()
 }
 void setup()
 {
+
   Serial.begin(115200);
+  pinMode(LED_BUILTIN, OUTPUT);
   if (!EEPROM.begin(512))
   {
     Serial.println("failed to init EEPROM");
   }
   // saveToEEPROM("Aykut","edirne12345");
+  if (loadLedStatus() == 1)
+  {
+    digitalWrite(LED_BUILTIN, HIGH);
+  }
+  else
+  {
+    digitalWrite(LED_BUILTIN, LOW);
+  }
+  
   loadFromEEPROM();
+ updatemode=  loadUpdateMode();
   WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0); // disable brownout detector
   Wire.begin(2, 13);
   sht30.begin();
@@ -277,7 +289,56 @@ void setup()
       NULL,                     /* Task input parameter */
       1,                        /* Priority of the task */
       NULL /* Task handle. */); /* Core where the task should run */
-  initCam();
+    // Wi-Fi connection
+    // Set device as a Wi-Fi Station
+    WiFi.mode(WIFI_STA);
+    WiFi.config(staticIP, gateway, subnet, dns, dns);
+    WiFi.begin(esid.c_str(), epass.c_str());
+    while (WiFi.status() != WL_CONNECTED)
+    {
+      delay(500);
+      Serial.print(".");
+    }
+    Serial.println("");
+    Serial.println("WiFi connected");
+
+    Serial.print("Camera Stream Ready! Go to: http://");
+    Serial.println(WiFi.localIP());
+    Serial.println(WiFi.macAddress());
+    wifiurl = WiFi.localIP().toString();
+
+    if (esp_now_init() == ESP_OK)
+    {
+      Serial.println("ESPNow Init Success");
+      nowInit = 1;
+      esp_now_register_send_cb(OnDataSent);
+      esp_now_register_recv_cb(OnDataRecv);
+      initBroadcastSlave();
+    }
+    else
+    {
+      nowInit = 0;
+      Serial.println("ESPNow Init Failed");
+    }
+  if (updatemode)
+  {
+
+
+
+    server.on("/", HTTP_GETconflict, [](AsyncWebServerRequest *request)
+              { request->send(200, "text/plain", "Go to /update"); });
+
+    AsyncElegantOTA.begin(&server); // Start ElegantOTA
+    server.begin();
+    Serial.println("Update Mode Started");
+    writeUpdateMode(0);
+  }
+  else
+
+  {
+    Serial.println("Normal mode");
+    initCam();
+  }
 }
 
 void loop()
@@ -290,7 +351,7 @@ void loop()
   // }
   broadcast();
   sendData("pulse", 1);
-  sendDebugMessages(100);
+  sendDebugMessages(1000);
   vTaskDelay(100 / portTICK_PERIOD_MS);
 }
 void displayTask(void *parameter)
@@ -387,7 +448,6 @@ void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status)
 {
   if (status == ESP_NOW_SEND_SUCCESS)
   {
-    Serial.println("sent success");
   }
   else
   {
@@ -410,7 +470,6 @@ void OnDataRecv(const uint8_t *mac_addr, const uint8_t *data, int data_len)
 
   if ((String)myData.type == "broadcast")
   {
-    Serial.println("broadcast message0");
     if (!esp_now_is_peer_exist(mac_addr))
       if (esp_now_add_peer(&mypeerInf) != ESP_OK)
       {
@@ -442,7 +501,7 @@ void OnDataRecv(const uint8_t *mac_addr, const uint8_t *data, int data_len)
     uint8_t data[] = {cmdResponseSetting, 0x1};
     std::string sendDataVal = std::string((char *)data, 2);
     sendData(sendDataVal, sendDataVal.length());
-    vTaskDelay(3000/portTICK_PERIOD_MS);
+    vTaskDelay(3000 / portTICK_PERIOD_MS);
     ESP.restart();
   }
 }
@@ -472,7 +531,7 @@ void initCam()
   config.pixel_format = PIXFORMAT_JPEG; // YUV422,GRAYSCALE,RGB565,JPEG
   if (psramFound())
   {
-    config.frame_size = FRAMESIZE_SVGA;
+    config.frame_size = FRAMESIZE_HVGA;
     config.jpeg_quality = 12;
     config.fb_count = 1;
   }
@@ -491,37 +550,7 @@ void initCam()
   }
   else
   {
-    // Wi-Fi connection
-    // Set device as a Wi-Fi Station
-    WiFi.mode(WIFI_STA);
-    WiFi.config(staticIP, gateway, subnet, dns, dns);
-    WiFi.begin(esid.c_str(), epass.c_str());
-    while (WiFi.status() != WL_CONNECTED)
-    {
-      delay(500);
-      Serial.print(".");
-    }
-    Serial.println("");
-    Serial.println("WiFi connected");
 
-    Serial.print("Camera Stream Ready! Go to: http://");
-    Serial.println(WiFi.localIP());
-    Serial.println(WiFi.macAddress());
-    wifiurl = WiFi.localIP().toString();
-
-    if (esp_now_init() == ESP_OK)
-    {
-      Serial.println("ESPNow Init Success");
-      nowInit = 1;
-      esp_now_register_send_cb(OnDataSent);
-      esp_now_register_recv_cb(OnDataRecv);
-      initBroadcastSlave();
-    }
-    else
-    {
-      nowInit = 0;
-      Serial.println("ESPNow Init Failed");
-    }
     startCameraServer();
   }
 }
@@ -579,6 +608,28 @@ void saveToEEPROM(String qsid, String qpass)
 }
 void processData(std::string value)
 {
+  switch ((byte)value[0])
+  {
+  case cmdFlashToggle:
+    if (digitalRead(LED_BUILTIN) == HIGH)
+    {
+      digitalWrite(LED_BUILTIN, LOW);
+      writeLedStatus(0);
+    }
+    else
+    {
+      digitalWrite(LED_BUILTIN, HIGH);
+      writeLedStatus(1);
+    }
+
+    break;
+    case cmdCamUpdateMode:
+    writeUpdateMode(1);
+    ESP.restart();
+    break;
+  default:
+    break;
+  }
 }
 void broadcast()
 {
@@ -602,4 +653,22 @@ void sendDebugMessages(int tick)
     Serial.printf("Temp:%.2f\t Humudity:%.2f\t \n", temp, hum);
     previousMillis = currentMillis;
   }
+}
+void writeLedStatus(uint8_t mode)
+{
+  EEPROM.write(510, mode); // EEPROM.put(address, boardId);
+  EEPROM.commit();
+}
+uint8_t loadLedStatus()
+{
+  return EEPROM.read(510);
+}
+uint8_t loadUpdateMode()
+{
+  return EEPROM.read(511);
+}
+void writeUpdateMode(uint8_t mode)
+{
+  EEPROM.write(511, mode); // EEPROM.put(address, boardId);
+  EEPROM.commit();
 }
