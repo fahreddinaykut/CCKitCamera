@@ -1,36 +1,52 @@
-/*
-* Constants_structs_and_functions.h
-*      
-* --> This header file contains the structs and functions used in both ESP32 modules;
-*            
-*/
+#pragma once
+#include "Arduino.h"
+#include "esp_camera.h"
+
+#include "esp_timer.h"
+#include "img_converters.h"
+
+#include "soc/soc.h"          //disable brownout problems
+#include "soc/rtc_cntl_reg.h" //disable brownout problems
+#include "esp_http_server.h"
+#include "Adafruit_BusIO_Register.h"
+#include <Wire.h>
+#include <AsyncTCP.h>
+#include <ESPAsyncWebServer.h>
+#include "AsyncElegantOTA.h"
+#include "functions.h"
+#include "variables.h"
+#include "nowLib.h"
+#include "Adafruit_SHT31.h"
+#define CAMERA_MODEL_AI_THINKER
+// #define CAMERA_MODEL_WROVER_KIT
+Adafruit_SHT31 sht31 = Adafruit_SHT31();
+#define EEPROM_SIZE 64
+#define SCREEN_WIDTH 128    // OLED display width, in pixels
+#define SCREEN_HEIGHT 64    // OLED display height, in pixels
+#define OLED_RESET -1       // Reset pin # (or -1 if sharing Arduino reset pin)
+#define SCREEN_ADDRESS 0x3C ///< See datasheet for Address; 0x3D for 128x64, 0x3C for 128x32
+
+#define PRINTSCANRESULTS 0
+#define DELETEBEFOREPAIR 0
 
 
-/********************************
-** Simbolic constants          **
-********************************/
-// --> Pins from the OV2640 camera module (CAMERA_MODEL_AI_THINKER)
-#define PWDN_GPIO_NUM     32
-#define RESET_GPIO_NUM    -1 // RESET pin is not available
-#define XCLK_GPIO_NUM      0
-#define SIOD_GPIO_NUM     26 //SDA pin - 'GPIO 26'
-#define SIOC_GPIO_NUM     27 //SCL pin - 'GPIO 26'
-#define Y9_GPIO_NUM       35 //D7 pin - 'GPIO 35'
-#define Y8_GPIO_NUM       34 //D6 pin - 'GPIO 34'
-#define Y7_GPIO_NUM       39 //D5 pin - 'GPIO 39'
-#define Y6_GPIO_NUM       36 //D4 pin - 'GPIO 36'
-#define Y5_GPIO_NUM       21 //D3 pin - 'GPIO 21'
-#define Y4_GPIO_NUM       19 //D2 pin - 'GPIO 19'
-#define Y3_GPIO_NUM       18 //D1 pin - 'GPIO 18'
-#define Y2_GPIO_NUM        5 //D0 pin - 'GPIO 5'
-#define VSYNC_GPIO_NUM    25
-#define HREF_GPIO_NUM     23
-#define PCLK_GPIO_NUM     22
+// See the following for generating UUIDs:
+// https://www.uuidgenerator.net/
+AsyncWebServer server(80);
 
+union twoByte
+{
+  byte bVal[2];
+  int iVal;
+};
+int addr = 0;
+uint8_t updatemode = 0;
+void startDataServer();
+void initCam();
+void sendDebugMessages(int tick);
+void measure();
 
-// --> EEPROM constants: picture number saved in card
-#define EEPROM_SIZE 1
-#define EEPROM_ADDRESS 0
-
-
+float temp = 0.0f;
+float hum = 0.0f;
+void i2cTask(void *parameter);
 
